@@ -117,8 +117,8 @@ if __name__ == '__main__':
     from fvcore.nn import flop_count
 
     x = torch.rand((1, 32, 20, 20))
-    mca = MultiHeadChannelAttention(32, 4, 4, fuse=False)
-    msa = MultiHeadSpatialAttention(32, 4, 4, fuse=False)
+    mca = MultiHeadChannelAttention(32, 16, 4, fuse=False)
+    msa = MultiHeadSpatialAttention(32, 16, 4, fuse=False)
     # flops, skip = flop_count(msa, (x,))
     # print("%s|%s" % (flops, skip))
     # out, attn = msa(x)
