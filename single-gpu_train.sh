@@ -1,0 +1,1 @@
+python tools/train.py configs/attnfpn/faster_rcnn_r50_attnfpn_1x_voc.py --gpus=1

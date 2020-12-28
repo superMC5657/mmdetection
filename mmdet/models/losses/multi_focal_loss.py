@@ -8,7 +8,6 @@ import torch
 from torch import nn
 
 
-
 class MultiFocalLoss(nn.Module, ABC):
 
     def __init__(self, alpha=1, gamma=2, reduction='mean'):

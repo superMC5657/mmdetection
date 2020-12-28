@@ -2,17 +2,19 @@
 # !@time: 2020/12/11 下午3:36
 # !@author: superMC @email: 18758266469@163.com
 # !@fileName: dma.py
+# dual MultiHeadSelfAttention
 from abc import ABC
+from math import ceil
 
 import torch
 
 from torch import nn, matmul
+from torch.nn import functional as F
 
 
-class MultiHeadSpatialAttention(nn.Module, ABC):
-    def __init__(self, in_planes, hidden_ratio=16, multi_head=4, alpha=0.5, fuse=False):
-        super(MultiHeadSpatialAttention, self).__init__()
-        hidden_state = in_planes // hidden_ratio
+class MultiHeadSpatialSelfAttention(nn.Module, ABC):
+    def __init__(self, in_planes, hidden_state=16, multi_head=4, alpha=0.5, fuse=False):
+        super().__init__()
         hidden_state = multi_head * hidden_state
         self.multi_head = multi_head
         self.hidden_state = hidden_state
@@ -44,10 +46,9 @@ class MultiHeadSpatialAttention(nn.Module, ABC):
         return out, attn
 
 
-class MultiHeadChannelAttention(nn.Module, ABC):
-    def __init__(self, in_planes, hidden_ratio=16, multi_head=4, beta=0.5, fuse=False):
-        super(MultiHeadChannelAttention, self).__init__()
-        hidden_state = in_planes // hidden_ratio
+class MultiHeadChannelSelfAttention(nn.Module, ABC):
+    def __init__(self, in_planes, hidden_state=16, multi_head=4, beta=0.5, fuse=False):
+        super(MultiHeadChannelSelfAttention, self).__init__()
         hidden_state = multi_head * hidden_state
         self.multi_head = multi_head
         self.hidden_state = hidden_state
@@ -79,6 +80,33 @@ class MultiHeadChannelAttention(nn.Module, ABC):
         return out, attn
 
 
+class MultiHeadSpatialSelfAttentionWithDownSampler(MultiHeadSpatialSelfAttention, ABC):
+    def __init__(self, in_planes, hidden_state=16, multi_head=4, alpha=0.5, fuse=False, ratio=1):
+        super().__init__(in_planes, hidden_state, multi_head, alpha, fuse)
+        self.downSample = nn.AvgPool2d(ratio, stride=ratio)
+        self.upSample = nn.Upsample(scale_factor=ratio, mode='nearest')
+
+    def forward(self, x):
+        x = self.downSample(x)
+        out, attn = super(MultiHeadSpatialSelfAttentionWithDownSampler, self).forward(x)
+        out = self.upSample(out)
+        return out, attn
+
+
+class MultiHeadSpatialSelfAttentionWithDownSamplerV2(MultiHeadSpatialSelfAttention, ABC):
+    def __init__(self, in_planes, hidden_state=16, multi_head=4, alpha=0.5, fuse=False, ratio=1):
+        super().__init__(in_planes, hidden_state, multi_head, alpha, fuse)
+        self.ratio = ratio
+
+    def forward(self, x):
+        batch_size, channel_num, width, height = x.size()
+        pool_size = ceil(width / self.ratio)
+        x = F.adaptive_avg_pool2d(input=x, output_size=(pool_size, pool_size))
+        out, attn = super().forward(x)
+        out = F.upsample(x, size=width, mode='nearest')
+        return out, attn
+
+
 class ScaledDotProductAttention(nn.Module, ABC):
     """ Scaled Dot-Product Attention """
 
@@ -88,20 +116,6 @@ class ScaledDotProductAttention(nn.Module, ABC):
         self.dropout = nn.Dropout(attn_dropout, inplace=False)
         self.softmax = nn.Softmax(dim=-1)
         self.fuse = fuse
-
-    # def forward(self, q, k, v):
-    #     batch_size, multi_head, d_v, WxH = v.size()
-    #     attn = torch.bmm(q.view(-1, q.size(2), q.size(3)) / self.temperature, k.view(-1, k.size(2), k.size(3)))
-    #     if self.fuse:
-    #         attn = attn.view(batch_size, multi_head, attn.size(1), attn.size(2))
-    #         attn = self.fuse(attn)
-    #         attn = attn.view(-1, attn.size(2), attn.size(3))
-    #     attn = self.dropout(self.softmax(attn))
-    #     # dropout 前softmax的话 inplace必须为false
-    #     v = torch.bmm(attn, v.view(-1, d_v, WxH))
-    #
-    #     return v.view(batch_size, multi_head, d_v, WxH), attn.view(batch_size, multi_head, attn.size(1), attn.size(2))
-
     def forward(self, q, k, v):
         attn = matmul(q / self.temperature, k)
         if self.fuse:
@@ -117,8 +131,8 @@ if __name__ == '__main__':
     from fvcore.nn import flop_count
 
     x = torch.rand((1, 32, 20, 20))
-    mca = MultiHeadChannelAttention(32, 4, 4, fuse=False)
-    msa = MultiHeadSpatialAttention(32, 4, 4, fuse=False)
+    mca = MultiHeadChannelSelfAttention(32, 16, 4, fuse=False)
+    msa = MultiHeadSpatialSelfAttention(32, 16, 4, fuse=False)
     # flops, skip = flop_count(msa, (x,))
     # print("%s|%s" % (flops, skip))
     # out, attn = msa(x)
