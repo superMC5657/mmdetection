@@ -6,7 +6,7 @@ from abc import ABC
 
 from ..resnet import ResNet
 from ... import BACKBONES
-from ...attn_module.dma import MultiHeadSpatialAttention, MultiHeadChannelAttention
+from ...attn_module.dma import MultiHeadSpatialSelfAttention, MultiHeadChannelSelfAttention
 
 
 @BACKBONES.register_module()
@@ -19,8 +19,8 @@ class AttnResNet(ResNet, ABC):
         super().__init__(depth, in_channels, stem_channels, base_channels, num_stages, strides, dilations, out_indices,
                          style, deep_stem, avg_down, frozen_stages, conv_cfg, norm_cfg, norm_eval, dcn, stage_with_dcn,
                          plugins, with_cp, zero_init_residual)
-        self.msa = MultiHeadSpatialAttention(self.feat_dim)
-        self.mca = MultiHeadChannelAttention(self.feat_dim)
+        self.msa = MultiHeadSpatialSelfAttention(self.feat_dim)
+        self.mca = MultiHeadChannelSelfAttention(self.feat_dim)
 
     def forward(self, x):
         if self.deep_stem:

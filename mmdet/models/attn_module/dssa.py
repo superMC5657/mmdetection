@@ -8,8 +8,8 @@ import torch
 from torch import nn
 
 
-class DiffScaleSpat1Attention(nn.Module, ABC):
+class DiffScaleSpatialAttention(nn.Module, ABC):
     def __init__(self, size=10):
-        super(DiffScaleSpat1Attention, self).__init__()
+        super(DiffScaleSpatialAttention, self).__init__()
         self.roi_pool = RoIPool(output_size=size, spatial_scale=1)
 
