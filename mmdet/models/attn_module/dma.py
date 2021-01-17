@@ -14,6 +14,7 @@ from torch.nn import functional as F
 
 class MultiHeadSpatialSelfAttention(nn.Module, ABC):
     def __init__(self, in_planes, hidden_state=16, multi_head=4, alpha=0.5, fuse=False):
+        super().__init__()
         hidden_state = multi_head * hidden_state
         self.multi_head = multi_head
         self.hidden_state = hidden_state

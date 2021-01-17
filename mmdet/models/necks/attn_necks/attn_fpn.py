@@ -2,18 +2,15 @@
 # !@time: 2020/12/31 下午10:03
 # !@author: superMC @email: 18758266469@163.com
 # !@fileName: attn_fpn.py
-import warnings
 from abc import ABC
 
-import torch.nn as nn
+import torch
 import torch.nn.functional as F
-from mmcv.cnn import ConvModule, xavier_init
 from mmcv.runner import auto_fp16
+from torch import matmul, nn
 
-from ...attn_module.dma import MultiHeadSpatialSelfAttention
-from ...builder import NECKS
 from ... import FPN
-from torch import nn, matmul
+from ...attn_module.dma_fpn import FPNAttentionV2
 
 
 class AttnFPNv1(FPN, ABC):
@@ -43,6 +40,7 @@ class AttnFPNv1(FPN, ABC):
             for j in range(used_backbone_levels):
                 attn_features = matmul(matmul(laterals[i].transpose(1, 2).contiguous(), laterals[j]),
                                        laterals[j].transpose(1, 2).contiguous()).transpose(1, 2).contiguous()
+                # 参数爆炸 因为sum没有做归一化
                 if j == 0:
                     outs.append(attn_features)
                 else:
@@ -77,23 +75,98 @@ class AttnFPNv1(FPN, ABC):
         return tuple(outs)
 
 
-class MultiHeadSpatialFPNAttention(MultiHeadSpatialSelfAttention, ABC):
-    def __init__(self, in_planes, hidden_state=16, multi_head=4, alpha=0.5, fuse=False):
-        super().__init__(in_planes, hidden_state, multi_head, alpha, fuse)
+class AttnFPNv2(FPN, ABC):
+    def __init__(self, in_channels, out_channels, num_outs, *args, **kwargs):
+        super().__init__(in_channels, out_channels, num_outs, *args, **kwargs)
+        self.fpn_attn = nn.ModuleList()
+        for i in range(num_outs):
+            first = False
+            last = False
+            if i == 0:
+                first = False
+            if i == num_outs - 1:
+                last = False
+            self.fpn_attn.append(
+                FPNAttentionV2(out_channels, upsample_cfg=self.upsample_cfg, first=first, last=last))
+        self.attention = ScaledDotProductAttention(out_channels)
 
+    @auto_fp16()
     def forward(self, inputs):
-        x1, x2 = inputs
-        batch_size_1, channel_num_1, width_1, height_1 = x1.size()
-        batch_size_2, channel_num_2, width_2, height_2 = x2.size()
-        proj_query = self.query_conv(x1).view(batch_size_1, self.multi_head, -1, width_1 * height_1).transpose(2,
-                                                                                                               3).contiguous()
-        proj_key = self.key_conv(x2).view(batch_size_2, self.multi_head, -1, width_2 * height_2)
-        out = self.value_conv(x2).view(batch_size_2, self.multi_head, -1, width_2 * height_2).transpose(2,
-                                                                                                        3).contiguous()
+        """Forward function."""
+        assert len(inputs) == len(self.in_channels)
 
-        out, attn = self.attention(proj_query, proj_key, out)
-        out = out.transpose(2, 3).contiguous().view(batch_size_1, -1, width_1, height_1)
-        out = self.conv(out)
-        out = self.bn(out)
+        # build laterals
+        laterals = [
+            lateral_conv(inputs[i + self.start_level])
+            for i, lateral_conv in enumerate(self.lateral_convs)
+        ]
 
-        return out, attn
+        # build top-down path
+        used_backbone_levels = len(laterals)
+        attns_1 = []
+        for i in range(used_backbone_levels - 1, 0, -1):
+            k_i = self.fpn_attn[i].k_up_forward(laterals[i], prev_shape=laterals[i - 1].shape[2:])
+            q_i_next = self.fpn_attn[i - 1].q_1_forward(laterals[i - 1])
+            k_i_next = self.fpn_attn[i - 1].k_self_1_forward(laterals[i - 1])
+            v_i_next = self.fpn_attn[i - 1].v_1_forward(laterals[i - 1])
+            k = torch.cat((k_i, k_i_next), dim=-2)
+            attn, laterals[i - 1] = self.attention(q_i_next, k, v_i_next)
+            attns_1.append(attn)
+        attns_2 = []
+        for i in range(0, used_backbone_levels - 1):
+            k_i = self.fpn_attn[i].k_down_forward(laterals[i])
+            q_i_next = self.fpn_attn[i + 1].q_2_forward(laterals[i + 1])
+            k_i_next = self.fpn_attn[i + 1].k_self_1_forward(laterals[i + 1])
+            v_i_next = self.fpn_attn[i + 1].v_2_forward(laterals[i + 1])
+            k = torch.cat((k_i, k_i_next), dim=-2)
+            attn, laterals[i + 1] = self.attention(q_i_next, k, v_i_next)
+            attns_2.append(attn)
+        # build outputs
+        # part 1: from original levels
+        outs = [
+            self.fpn_convs[i](laterals[i]) for i in range(used_backbone_levels)
+        ]
+        # part 2: add extra levels
+        if self.num_outs > len(outs):
+            # use max pool to get more levels on top of outputs
+            # (e.g., Faster R-CNN, Mask R-CNN)
+            if not self.add_extra_convs:
+                for i in range(self.num_outs - used_backbone_levels):
+                    outs.append(F.max_pool2d(outs[-1], 1, stride=2))
+            # add conv layers on top of original feature maps (RetinaNet)
+            else:
+                if self.add_extra_convs == 'on_input':
+                    extra_source = inputs[self.backbone_end_level - 1]
+                elif self.add_extra_convs == 'on_lateral':
+                    extra_source = laterals[-1]
+                elif self.add_extra_convs == 'on_output':
+                    extra_source = outs[-1]
+                else:
+                    raise NotImplementedError
+                outs.append(self.fpn_convs[used_backbone_levels](extra_source))
+                for i in range(used_backbone_levels + 1, self.num_outs):
+                    if self.relu_before_extra_convs:
+                        outs.append(self.fpn_convs[i](F.relu(outs[-1])))
+                    else:
+                        outs.append(self.fpn_convs[i](outs[-1]))
+        return tuple(outs)
+
+
+class ScaledDotProductAttention(nn.Module, ABC):
+    """ Scaled Dot-Product Attention """
+
+    def __init__(self, temperature, attn_dropout=0.1):
+        super().__init__()
+        self.temperature = temperature
+        # self.dropout = nn.Dropout(attn_dropout, inplace=False)
+        self.softmax = nn.Softmax(dim=-2)
+
+    def forward(self, q, k, v):
+        attn = matmul(q / self.temperature, k)
+        attn = self.softmax(attn)
+        attn = self.dropout(attn)
+        v = matmul(attn, v)
+        v = torch.sum(v, dim=-2)
+        if len(v.size()) == 5:
+            v = v.squeeze(dim=-1)
+        return v, attn
