@@ -10,7 +10,7 @@ from mmcv.runner import auto_fp16
 from torch import matmul, nn
 
 from ... import FPN
-from ...attn_module.dma_fpn import FPNAttentionV2
+from ...attn_module.dma_fpn import FPNAttentionUp
 
 
 class AttnFPNv1(FPN, ABC):
@@ -75,20 +75,20 @@ class AttnFPNv1(FPN, ABC):
         return tuple(outs)
 
 
-class AttnFPNv2(FPN, ABC):
+class AttnFPN(FPN, ABC):
     def __init__(self, in_channels, out_channels, num_outs, *args, **kwargs):
         super().__init__(in_channels, out_channels, num_outs, *args, **kwargs)
-        self.fpn_attn = nn.ModuleList()
-        for i in range(num_outs):
-            first = False
-            last = False
+        self.fpn_attn_up = nn.ModuleList()
+        for i in range(self.num_ins):
+            up_conv = True
+            self_conv = True
             if i == 0:
-                first = False
-            if i == num_outs - 1:
-                last = False
-            self.fpn_attn.append(
-                FPNAttentionV2(out_channels, upsample_cfg=self.upsample_cfg, first=first, last=last))
-        self.attention = ScaledDotProductAttention(out_channels)
+                up_conv = False
+            if i == self.num_ins - 1:
+                self_conv = False
+            self.fpn_attn_up.append(
+                FPNAttentionUp(out_channels, upsample_cfg=self.upsample_cfg, up_conv=up_conv, self_conv=self_conv))
+        self.attention = ScaledDotProductAttention(out_channels ** 0.5)
 
     @auto_fp16()
     def forward(self, inputs):
@@ -103,24 +103,14 @@ class AttnFPNv2(FPN, ABC):
 
         # build top-down path
         used_backbone_levels = len(laterals)
-        attns_1 = []
         for i in range(used_backbone_levels - 1, 0, -1):
-            k_i = self.fpn_attn[i].k_up_forward(laterals[i], prev_shape=laterals[i - 1].shape[2:])
-            q_i_next = self.fpn_attn[i - 1].q_1_forward(laterals[i - 1])
-            k_i_next = self.fpn_attn[i - 1].k_self_1_forward(laterals[i - 1])
-            v_i_next = self.fpn_attn[i - 1].v_1_forward(laterals[i - 1])
-            k = torch.cat((k_i, k_i_next), dim=-2)
-            attn, laterals[i - 1] = self.attention(q_i_next, k, v_i_next)
-            attns_1.append(attn)
-        attns_2 = []
-        for i in range(0, used_backbone_levels - 1):
-            k_i = self.fpn_attn[i].k_down_forward(laterals[i])
-            q_i_next = self.fpn_attn[i + 1].q_2_forward(laterals[i + 1])
-            k_i_next = self.fpn_attn[i + 1].k_self_1_forward(laterals[i + 1])
-            v_i_next = self.fpn_attn[i + 1].v_2_forward(laterals[i + 1])
-            k = torch.cat((k_i, k_i_next), dim=-2)
-            attn, laterals[i + 1] = self.attention(q_i_next, k, v_i_next)
-            attns_2.append(attn)
+            prev_shape = laterals[i - 1].shape[2:]
+            query_up, value_up = self.fpn_attn_up[i].query_value_up_conv(laterals[i], prev_shape)
+            query_self, value_self, key_self = self.fpn_attn_up[i - 1].query_value_key_self_conv(laterals[i - 1])
+            query = torch.cat((query_up, query_self), dim=-2)
+            value = torch.cat((value_up, value_self), dim=-1)
+            laterals[i - 1] = self.attention(query, value, key_self)
+
         # build outputs
         # part 1: from original levels
         outs = [
@@ -155,18 +145,15 @@ class AttnFPNv2(FPN, ABC):
 class ScaledDotProductAttention(nn.Module, ABC):
     """ Scaled Dot-Product Attention """
 
-    def __init__(self, temperature, attn_dropout=0.1):
+    def __init__(self, temperature):
         super().__init__()
         self.temperature = temperature
-        # self.dropout = nn.Dropout(attn_dropout, inplace=False)
         self.softmax = nn.Softmax(dim=-2)
 
-    def forward(self, q, k, v):
+    def forward(self, q, v, k):
         attn = matmul(q / self.temperature, k)
         attn = self.softmax(attn)
-        attn = self.dropout(attn)
-        v = matmul(attn, v)
-        v = torch.sum(v, dim=-2)
-        if len(v.size()) == 5:
-            v = v.squeeze(dim=-1)
-        return v, attn
+        v = matmul(v, attn).squeeze(dim=-1)
+        batch_size, width, height, channel_num = v.size()
+        v = v.permute(0, 3, 1, 2).contiguous().view(batch_size, channel_num, width, height)
+        return v

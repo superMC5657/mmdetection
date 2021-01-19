@@ -31,137 +31,83 @@ class MultiHeadSpatialFPNAttention(MultiHeadSpatialSelfAttention, ABC):
         return out, attn
 
 
-class FPNAttentionV2(nn.Module, ABC):
-    def __init__(self, in_planes, upsample_cfg, first=False, last=False):
+class FPNAttentionBottom(nn.Module, ABC):
+    def __init__(self, in_planes, upsample_cfg='conv', bottom_conv=True, self_conv=True):
         super().__init__()
-        self.query_1_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        self.query_2_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        if not first:
-            self.key_self_1_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        if not last:
-            self.key_self_2_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
+        if bottom_conv:
+            self.query_bottom_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
+            self.value_bottom_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
+        if self_conv:
+            self.query_self_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
+            self.value_self_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
+            self.key_self_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
+        if upsample_cfg == 'maxpool':
+            self.downsample = nn.MaxPool2d(kernel_size=2, stride=2)
+        elif upsample_cfg == 'conv':
+            self.downsample = nn.Conv2d(in_planes, in_planes, kernel_size=3, stride=2, padding=1)
 
-        self.key_up_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        self.key_down_conv = nn.Conv2d(in_planes, in_planes, kernel_size=3, stride=2, padding=1)
+    def query_value_bottom_conv(self, x, prev_shape):
+        if prev_shape:
+            x = F.adaptive_max_pool2d_with_indices(x, prev_shape)
+        else:
+            x = self.downsample(x)
+        q = self.query_bottom_conv(x)
+        v = self.value_bottom_conv(x)
 
-        self.value_1_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        self.value_2_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        self.upsample_cfg = upsample_cfg
-
-    def q_1_forward(self, x):
-        q = self.query_1_conv(x)
         batch_size, channel_num, width, height = q.size()
         q = q.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, 1, channel_num)
-        return q
+        batch_size, channel_num, width, height = v.size()
+        v = v.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1)
+        return q, v
 
-    def q_2_forward(self, x):
-        q = self.query_2_conv(x)
+    def query_value_key_self_conv(self, x):
+        q = self.query_self_conv(x)
+        v = self.value_self_conv(x)
+        k = self.key_self_conv(x)
         batch_size, channel_num, width, height = q.size()
         q = q.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, 1, channel_num)
-        return q
-
-    def k_up_forward(self, x, prev_shape):
-        k = self.key_up_conv(x)
-        if 'scale_factor' in self.upsample_cfg:
-            k = F.interpolate(k, **self.upsample_cfg)
-        else:
-            k = F.interpolate(k, size=prev_shape, **self.upsample_cfg)
-        batch_size, channel_num, width, height = k.size()
-        k = k.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1)
-        return k
-
-    def k_self_1_forward(self, x):
-        k = self.key_self_1_conv(x)
-        batch_size, channel_num, width, height = k.size()
-        k = k.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1)
-        return k
-
-    def k_self_2_forward(self, x):
-        k = self.key_self_2_conv(x)
-        batch_size, channel_num, width, height = k.size()
-        k = k.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1)
-        return k
-
-    def k_down_forward(self, x):
-        k = self.key_down_conv(x)
-        batch_size, channel_num, width, height = k.size()
-        k = k.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1)
-        return k
-
-    def v_1_forward(self, x):
-        v = self.value_1_conv(x)
         batch_size, channel_num, width, height = v.size()
-        v = v.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, 1, channel_num)
-        return v
-
-    def v_2_forward(self, x):
-        v = self.value_2_conv(x)
-        batch_size, channel_num, width, height = v.size()
-        v = v.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, 1, channel_num)
-        return v
+        v = v.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1)
+        batch_size, channel_num, width, height = k.size()
+        k = k.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1)
+        return q, v, k
 
 
-class FPNAttentionV3(ABC):
-    def __init__(self, in_planes, upsample_cfg, first=False, last=False):
+class FPNAttentionUp(nn.Module, ABC):
+    def __init__(self, in_planes, upsample_cfg, up_conv=True, self_conv=True):
         super().__init__()
-        self.query_1_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        self.query_2_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        self.key_self_1_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        self.key_self_2_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        self.key_up_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        self.key_down_conv = nn.Conv2d(in_planes, in_planes, kernel_size=3, stride=2, padding=1)
-        self.value_1_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        self.value_2_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
+        if up_conv:
+            self.query_up_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
+            self.value_up_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
+        if self_conv:
+            self.query_self_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
+            self.value_self_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
+            self.key_self_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
         self.upsample_cfg = upsample_cfg
 
-    def q_1_forward(self, x):
-        q = self.query_1_conv(x)
-        batch_size, channel_num, width, height = q.size()
-        q = q.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1, 1)
-        return q
-
-    def q_2_forward(self, x):
-        q = self.query_2_conv(x)
-        batch_size, channel_num, width, height = q.size()
-        q = q.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1, 1)
-        return q
-
-    def k_up_forward(self, x, prev_shape):
-        k = self.key_up_conv(x)
+    def query_value_up_conv(self, x, prev_shape):
+        q = self.query_up_conv(x)
+        v = self.value_up_conv(x)
         if 'scale_factor' in self.upsample_cfg:
-            k = F.interpolate(k, **self.upsample_cfg)
+            q = F.interpolate(q, **self.upsample_cfg)
+            v = F.interpolate(v, **self.upsample_cfg)
         else:
-            k = F.interpolate(k, size=prev_shape, **self.upsample_cfg)
-        batch_size, channel_num, width, height = k.size()
-        k = k.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1, 1)
-        return k
-
-    def k_self_1_forward(self, x):
-        k = self.key_self_1_conv(x)
-        batch_size, channel_num, width, height = k.size()
-        k = k.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1, 1)
-        return k
-
-    def k_self_2_forward(self, x):
-        k = self.key_self_2_conv(x)
-        batch_size, channel_num, width, height = k.size()
-        k = k.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1, 1)
-        return k
-
-    def k_down_forward(self, x):
-        k = self.key_down_conv(x)
-        batch_size, channel_num, width, height = k.size()
-        k = k.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1, 1)
-        return k
-
-    def v_1_forward(self, x):
-        v = self.value_1_conv(x)
+            q = F.interpolate(q, size=prev_shape, **self.upsample_cfg)
+            v = F.interpolate(v, size=prev_shape, **self.upsample_cfg)
+        batch_size, channel_num, width, height = q.size()
+        q = q.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, 1, channel_num)
         batch_size, channel_num, width, height = v.size()
-        v = v.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1, 1)
-        return v
+        v = v.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1)
+        return q, v
 
-    def v_2_forward(self, x):
-        v = self.value_2_conv(x)
+    def query_value_key_self_conv(self, x):
+        q = self.query_self_conv(x)
+        v = self.value_self_conv(x)
+        k = self.key_self_conv(x)
+        batch_size, channel_num, width, height = q.size()
+        q = q.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, 1, channel_num)
         batch_size, channel_num, width, height = v.size()
-        v = v.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1, 1)
-        return v
+        v = v.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1)
+        batch_size, channel_num, width, height = k.size()
+        k = k.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1)
+        return q, v, k
