@@ -76,15 +76,32 @@ class AttnFPNv1(FPN, ABC):
 
 
 class AttnFPN(FPN, ABC):
-    def __init__(self, in_channels, out_channels, num_outs, *args, **kwargs):
-        super().__init__(in_channels, out_channels, num_outs, *args, **kwargs)
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 num_outs,
+                 start_level=0,
+                 end_level=-1,
+                 add_extra_convs=False,
+                 extra_convs_on_inputs=True,
+                 relu_before_extra_convs=False,
+                 no_norm_on_lateral=False,
+                 conv_cfg=None,
+                 norm_cfg=None,
+                 act_cfg=None,
+                 upsample_cfg=dict(mode='nearest')):
+        super(AttnFPN,
+              self).__init__(in_channels, out_channels, num_outs, start_level,
+                             end_level, add_extra_convs, extra_convs_on_inputs,
+                             relu_before_extra_convs, no_norm_on_lateral,
+                             conv_cfg, norm_cfg, act_cfg, upsample_cfg)
         self.fpn_attn_up = nn.ModuleList()
-        for i in range(self.num_ins):
+        for i in range(self.start_level, self.backbone_end_level):
             up_conv = True
             self_conv = True
-            if i == 0:
+            if i == self.start_level:
                 up_conv = False
-            if i == self.num_ins - 1:
+            if i == self.backbone_end_level - 1:
                 self_conv = False
             self.fpn_attn_up.append(
                 FPNAttentionUp(out_channels, upsample_cfg=self.upsample_cfg, up_conv=up_conv, self_conv=self_conv))

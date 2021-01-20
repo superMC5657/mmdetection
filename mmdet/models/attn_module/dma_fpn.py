@@ -32,7 +32,7 @@ class MultiHeadSpatialFPNAttention(MultiHeadSpatialSelfAttention, ABC):
 
 
 class FPNAttentionBottom(nn.Module, ABC):
-    def __init__(self, in_planes, upsample_cfg='conv', bottom_conv=True, self_conv=True):
+    def __init__(self, in_planes, downsample_cfg='conv', bottom_conv=True, self_conv=True):
         super().__init__()
         if bottom_conv:
             self.query_bottom_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
@@ -41,12 +41,12 @@ class FPNAttentionBottom(nn.Module, ABC):
             self.query_self_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
             self.value_self_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
             self.key_self_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
-        if upsample_cfg == 'maxpool':
+        if downsample_cfg == 'maxpool':
             self.downsample = nn.MaxPool2d(kernel_size=2, stride=2)
-        elif upsample_cfg == 'conv':
+        elif downsample_cfg == 'conv':
             self.downsample = nn.Conv2d(in_planes, in_planes, kernel_size=3, stride=2, padding=1)
 
-    def query_value_bottom_conv(self, x, prev_shape):
+    def query_value_bottom_conv(self, x, prev_shape=None):
         if prev_shape:
             x = F.adaptive_max_pool2d_with_indices(x, prev_shape)
         else:
