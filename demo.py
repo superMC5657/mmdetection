@@ -4,7 +4,8 @@
 # !@fileName: demo.py
 import time
 
-from mmdet.models.necks.attn_necks.attn_pafpn import AttnPAFPN
+from mmdet.models.necks.attn_necks.attn_pafpn import AttnPAFPN, AttnPAFPNV2
+from mmdet.models.necks.attn_necks.attn_fpn import AttnFPN, AttnFPNV2
 
 if __name__ == '__main__':
     import torch
@@ -21,7 +22,7 @@ if __name__ == '__main__':
     in_channels = [2, 3, 5]
     scales = [68, 34, 17]
     inputs = [torch.rand(1, c, s, s).cuda() for c, s in zip(in_channels, scales)]
-    self = AttnPAFPN(in_channels, 256, len(in_channels) + 3).cuda().eval()
+    self = AttnPAFPNV2(in_channels, 256, len(in_channels) + 3).cuda().eval()
 
     for i in range(100):
         start = time.time()

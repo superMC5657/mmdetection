@@ -3,7 +3,7 @@
 # !@author: superMC @email: 18758266469@163.com
 # !@fileName: __init__.py.py
 
-from .attn_fpn import AttnFPN
-from .attn_pafpn import AttnPAFPN
+from .attn_fpn import AttnFPN, AttnFPNV2
+from .attn_pafpn import AttnPAFPN, AttnPAFPNV2
 
-__all__ = ['AttnFPN', 'AttnPAFPN']
+__all__ = ['AttnFPN', 'AttnPAFPN', 'AttnFPNV2', 'AttnPAFPNV2']
