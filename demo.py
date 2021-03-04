@@ -19,19 +19,26 @@ if __name__ == '__main__':
     #     print(tuple(level_out.shape))
     # for attn in attns:
     #     print(tuple(attn.shape))
-    in_channels = [2, 3, 5]
-    scales = [68, 34, 17]
-    inputs = [torch.rand(1, c, s, s).cuda() for c, s in zip(in_channels, scales)]
-    self = AttnPAFPNV2(in_channels, 256, len(in_channels) + 3).cuda().eval()
-
-    for i in range(100):
-        start = time.time()
-
-        outputs = self.forward(inputs)
-        print(time.time() - start)
+    # in_channels = [2, 3, 5]
+    # scales = [68, 34, 17]
+    # inputs = [torch.rand(1, c, s, s).cuda() for c, s in zip(in_channels, scales)]
+    # self = AttnPAFPNV2(in_channels, 256, len(in_channels) + 3).cuda().eval()
+    #
+    # for i in range(100):
+    #     start = time.time()
+    #
+    #     outputs = self.forward(inputs)
+    #     print(time.time() - start)
 
     # torch.save(self, 'fpn.pth')
     # x1 = torch.randn((2, 256))
     # x2 = torch.randn((256, 2))
     # y = torch.matmul(x1, x2)
     # print(y)
+
+    x1 = torch.rand(1, 250, 12, 12)
+    x2 = torch.rand(1, 250, 12, 12)
+    print(x1, x2)
+    x3 = x1 * x2
+    print(x3)
+    print(x3.size())

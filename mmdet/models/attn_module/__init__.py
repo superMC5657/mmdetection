@@ -6,4 +6,5 @@
 
 from .dma_fpn import *
 
-__all__ = ['FPNAttentionBottom', 'FPNAttentionUp']
+__all__ = ['FPNAttentionBottomV3', 'FPNAttentionUpV3', 'FPNAttentionBottom', 'FPNAttentionUp', 'FPNAttentionBottomV2',
+           'FPNAttentionUpV2']

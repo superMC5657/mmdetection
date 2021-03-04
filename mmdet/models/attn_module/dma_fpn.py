@@ -182,3 +182,33 @@ class FPNAttentionUpV2(nn.Module, ABC):
         batch_size, channel_num, width, height = k.size()
         k = k.permute(0, 2, 3, 1).contiguous().view(batch_size, width, height, channel_num, 1)
         return q, v, k
+
+
+class FPNAttentionBottomV3(nn.Module, ABC):
+    def __init__(self, in_planes, downsample_cfg='conv'):
+        super().__init__()
+        if downsample_cfg == 'conv':
+            self.query_bottom_conv = nn.Conv2d(in_planes, in_planes, kernel_size=3, stride=2, padding=1)
+        elif downsample_cfg == 'maxpool':
+            self.query_bottom_conv = nn.MaxPool2d(2, 2)
+        else:
+            raise Exception('unknown downsample config')
+
+    def query_bottom_conv(self, x):
+        q = self.query_bottom_conv(x)
+        return q
+
+
+class FPNAttentionUpV3(nn.Module, ABC):
+    def __init__(self, in_planes, upsample_cfg):
+        super().__init__()
+        self.query_up_conv = nn.Conv2d(in_planes, in_planes, kernel_size=1)
+        self.upsample_cfg = upsample_cfg
+
+    def query_up_conv_forward(self, x, prev_shape):
+        if 'scale_factor' in self.upsample_cfg:
+            x = F.interpolate(x, **self.upsample_cfg)
+        else:
+            x = F.interpolate(x, size=prev_shape, **self.upsample_cfg)
+        q = self.query_up_conv(x)
+        return q
