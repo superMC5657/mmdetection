@@ -183,6 +183,7 @@ class AttnFPNV2(FPN, ABC):
         return tuple(outs)
 
 
+@NECKS.register_module()
 class AttnFPNV3(FPN, ABC):
     def __init__(self,
                  in_channels,
@@ -204,7 +205,7 @@ class AttnFPNV3(FPN, ABC):
                              relu_before_extra_convs, no_norm_on_lateral,
                              conv_cfg, norm_cfg, act_cfg, upsample_cfg)
         self.fpn_attn_up = nn.ModuleList()
-        for i in range(self.start_level, self.backbone_end_level):
+        for i in range(self.start_level, self.backbone_end_level - 1):
             self.fpn_attn_up.append(
                 FPNAttentionUpV3(out_channels, upsample_cfg=self.upsample_cfg))
         self.relu = nn.ReLU(inplace=True)
@@ -222,9 +223,9 @@ class AttnFPNV3(FPN, ABC):
 
         # build top-down path
         used_backbone_levels = len(laterals)
-        for i in range(used_backbone_levels - 1, 0, -1):
+        for i in range(used_backbone_levels - 1, 1, -1):
             prev_shape = laterals[i - 1].shape[2:]
-            query_up = self.fpn_attn_up[i].query_up_conv(laterals[i], prev_shape)
+            query_up = self.fpn_attn_up[i-1](laterals[i], prev_shape)
 
             laterals[i - 1] = (query_up + 1) * laterals[i - 1]
 
